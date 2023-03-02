@@ -42,10 +42,9 @@ class ImportData:
             del pd_df
 
     def import_rest(self):
-        # for datafile in [x for x in os.listdir(self.folder_path) \
-        #                  if x.endswith('tsv.gz') and x in \
-        #                  ['title.akas.tsv.gz', 'title.principals.tsv.gz']]:
-        for datafile in [x for x in os.listdir(self.folder_path) if x.endswith('tsv.gz')]:
+        for datafile in [x for x in os.listdir(self.folder_path) \
+                         if x.endswith('tsv.gz') and x in \
+                         ['title.akas.tsv.gz', 'title.principals.tsv.gz']]:
             dataname = ('').join(datafile.split('.')[:2])
             # read data
             data_path = os.path.join(self.folder_path, datafile)
