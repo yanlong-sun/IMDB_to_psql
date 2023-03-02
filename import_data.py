@@ -2,13 +2,10 @@
 Restore the IMDb data to POSTGRESQL
 """
 import psycopg2
-import pandas as pd
-import csv, os, io, gzip
+import os, gzip
 from io import StringIO
-from sqlalchemy import create_engine
 from dask import dataframe as dd
 import argparse
-import numpy as np
 
 class ImportData:
     def __init__(self, dbname, username, password, folder_path):
@@ -17,60 +14,59 @@ class ImportData:
         self.username = username
         self.password = password
         self.connect_cmd = "dbname="+ self.dbname + " " + "user=" + self.username + " " + "password=" + self.password
-        self.create_engine_cmd = "postgresql://" + self.username + ":" + self.password + "@localhost:5432/" + self.dbname
         self.dtype_dict = {
-            "titleakas": {
-                'titleId': 'string',
-                'ordering': 'int',
-                'title': 'string',
-                'region': 'string',
-                'language': 'string',
-                'types': 'object',
-                'attributes': 'object',
+           "titleakas": {
+                'titleId': 'text',
+                'ordering': 'integer',
+                'title': 'text',
+                'region': 'text',
+                'language': 'text',
+                'types': 'text[]',
+                'attributes': 'text[]',
                 'isOriginalTitle': 'boolean'
             },
             "titlebasics": {
-                'tconst': 'string',
-                'titleType': 'string',
-                'primaryTitle': 'string',
-                'originalTitle': 'string',
+                'tconst': 'text',
+                'titleType': 'text',
+                'primaryTitle': 'text',
+                'originalTitle': 'text',
                 'isAdult': 'boolean',
-                'startYear': 'Int64',
-                'endYear': 'Int64',
-                'runtimeMinutes': 'Int64',
-                'genres': 'object'
+                'startYear': 'integer',
+                'endYear': 'integer',
+                'runtimeMinutes': 'integer',
+                'genres': 'text[]'
             },
             "titlecrew":{
-                'tconst': 'string',
-                'directors': 'object',
-                'writers': 'object'
+                'tconst': 'text',
+                'directors': 'text[]',
+                'writers': 'text[]'
             },
             "titleepisode": {
-                'tconst': 'string',
-                'parentTconst': 'string',
-                'seasonNumber': 'Int64',
-                'episodeNumber': 'Int64'
+                'tconst': 'text',
+                'parentTconst': 'text',
+                'seasonNumber': 'integer',
+                'episodeNumber': 'integer'
             },
             "titleprincipals": {
-                'tconst': 'string',
-                'ordering': 'int',
-                'nconst': 'string',
-                'category': 'string',
-                'job': 'string',
-                'characters': 'string'
+                'tconst': 'text',
+                'ordering': 'integer',
+                'nconst': 'text',
+                'category': 'text',
+                'job': 'text',
+                'characters': 'text'
             },
             "titleratings": {
-                'tconst': 'string',
-                'averageRating': 'float64',
-                'numVotes': 'Int64'
+                'tconst': 'text',
+                'averageRating': 'numeric(3,1)',
+                'numVotes': 'integer'
             },
             "namebasics": {
-                'nconst': 'string',
-                'primaryName': 'string',
-                'birthYear': 'Int64',
-                'deathYear': 'Int64',
-                'primaryProfession': 'object',
-                'knownForTitles': 'object'
+                'nconst': 'text',
+                'primaryName': 'text',
+                'birthYear': 'integer',
+                'deathYear': 'integer',
+                'primaryProfession': 'text[]',
+                'knownForTitles': 'text[]'
             }
         }
         self.pks = {
@@ -82,14 +78,16 @@ class ImportData:
             "titleratings": 'tconst',
             "namebasics": 'nconst'
         }
+        self.number = 1
 
     def import_all(self):
         for datafile in [x for x in os.listdir(self.folder_path) if x.endswith('tsv.gz')]:
             dataname = ('').join(datafile.split('.')[:2])
+            print(f"#{self.number} start restoring {dataname}")
             # read data
             data_path = os.path.join(self.folder_path, datafile)
             with gzip.open(data_path, 'rb') as f:
-                df = dd.read_csv(data_path, sep = '\t', dtype=object)
+                df = dd.read_csv(data_path, sep = '\t', dtype=object, blocksize=None)
             df = df.replace('\\N', "")
             df = df.set_index(self.pks[dataname])
             # create empty table in DB
@@ -97,25 +95,35 @@ class ImportData:
             cursor = conn.cursor()
             schema = 'public'
             primary_key = self.pks[dataname]
-
+        
             cursor.execute(f'CREATE SCHEMA IF NOT EXISTS {schema}')
-            cursor.execute(f'CREATE TABLE IF NOT EXISTS {schema}.{dataname} ({", ".join([f"{col} {self.dtype_dict[dataname][col]}" for col in df.columns])}, PRIMARY KEY ({primary_key}))')
-
+            query_string = f'CREATE TABLE IF NOT EXISTS {schema}.{dataname} ({", ".join([f"{col} {self.dtype_dict[dataname][col]}" for col in df.columns])})'
+            print(query_string)
+            cursor.execute(f'CREATE TABLE IF NOT EXISTS {schema}.{dataname} ({", ".join([f"{col} {self.dtype_dict[dataname][col]}" for col in df.columns])})')
+            cursor.execute(f'ALTER TABLE {schema}.{dataname} ADD PRIMARY KEY ({primary_key})')
             
             # load data to DB
             # Write data to table
+            err_tables = []
             for n in range(df.npartitions):
                 data = df.get_partition(n).compute()
                 output = StringIO()
-                data.to_csv(output, sep='\t', header=False, index=True)
+                data.to_csv(output, sep='\t', header=False, index=False)
                 output.seek(0)
-                cursor.copy_from(output, f'{schema}.{dataname}', sep='\t', null='')
+                try:
+                    cursor.copy_from(output, f'{schema}.{dataname}', null='')
+                except Exception:
+                    print(Exception)
+                    err_tables.append(data)
+                    conn.rollback()
+                    continue
                 conn.commit()
 
             # Close database connection
             cursor.close()
             conn.close()
             print(f"{dataname} finished.")
+            self.number += 1
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Import IMDb datasets into the database",
@@ -132,6 +140,7 @@ if __name__ == "__main__":
     print(f"Password: {args.password}")
     folder_path = args.folder_path if args.folder_path else '/Users/yanlongsun/Downloads/imdb_data/'  
     print(f"Dataset Path: {folder_path}")
+    print("\n")
     i = ImportData(dbname=args.dbname, 
                    username=args.username, 
                    password=args.password, 
