@@ -2,8 +2,10 @@
 Restore the IMDb data to POSTGRESQL
 """
 import psycopg2
-import os, gzip
+import pandas as pd
+import csv, os, io, gzip
 from io import StringIO
+from sqlalchemy import create_engine
 from dask import dataframe as dd
 import argparse
 
@@ -14,116 +16,113 @@ class ImportData:
         self.username = username
         self.password = password
         self.connect_cmd = "dbname="+ self.dbname + " " + "user=" + self.username + " " + "password=" + self.password
-        self.dtype_dict = {
-           "titleakas": {
-                'titleId': 'text',
-                'ordering': 'integer',
-                'title': 'text',
-                'region': 'text',
-                'language': 'text',
-                'types': 'text[]',
-                'attributes': 'text[]',
-                'isOriginalTitle': 'boolean'
-            },
-            "titlebasics": {
-                'tconst': 'text',
-                'titleType': 'text',
-                'primaryTitle': 'text',
-                'originalTitle': 'text',
-                'isAdult': 'boolean',
-                'startYear': 'integer',
-                'endYear': 'integer',
-                'runtimeMinutes': 'integer',
-                'genres': 'text[]'
-            },
-            "titlecrew":{
-                'tconst': 'text',
-                'directors': 'text[]',
-                'writers': 'text[]'
-            },
-            "titleepisode": {
-                'tconst': 'text',
-                'parentTconst': 'text',
-                'seasonNumber': 'integer',
-                'episodeNumber': 'integer'
-            },
-            "titleprincipals": {
-                'tconst': 'text',
-                'ordering': 'integer',
-                'nconst': 'text',
-                'category': 'text',
-                'job': 'text',
-                'characters': 'text'
-            },
-            "titleratings": {
-                'tconst': 'text',
-                'averageRating': 'numeric(3,1)',
-                'numVotes': 'integer'
-            },
-            "namebasics": {
-                'nconst': 'text',
-                'primaryName': 'text',
-                'birthYear': 'integer',
-                'deathYear': 'integer',
-                'primaryProfession': 'text[]',
-                'knownForTitles': 'text[]'
-            }
-        }
-        self.pks = {
-            "titleakas": 'titleId',
-            "titlebasics": 'tconst',
-            "titlecrew": 'tconst',
-            "titleepisode": 'tconst',
-            "titleprincipals":'tconst',
-            "titleratings": 'tconst',
-            "namebasics": 'nconst'
-        }
-        self.number = 1
+        self.create_engine_cmd = "postgresql://" + self.username + ":" + self.password + "@localhost:5432/" + self.dbname
 
-    def import_all(self):
+    def import_partial(self):
+        for datafile in [x for x in os.listdir(self.folder_path) \
+                         if x.endswith('tsv.gz') and x not in \
+                         ['title.akas.tsv.gz', 'title.principals.tsv.gz']]:
+            dataname = ('').join(datafile.split('.')[:2])
+            with gzip.open(os.path.join(self.folder_path, datafile), 'rb') as f:
+                # read data
+                df = pd.read_csv(f, sep= '\t',chunksize=10000)
+                pd_df = pd.concat(df)
+            pd_df = pd_df.replace( '\\N', '')
+            # load data to DB
+            conn = psycopg2.connect(self.connect_cmd)
+            engine = create_engine(self.create_engine_cmd)
+            pd_df.to_sql(dataname, engine, method=self.psql_insert_copy)
+            #control operation
+            with conn.cursor() as curs:
+                curs.execute("""
+                select count(*) from """+dataname+"""
+                            """)
+                datacount = curs.fetchone()
+            print(f"Finished {dataname}, {datacount[0]} rows restored")    
+            del pd_df
+
+    def import_rest(self):
+        # for datafile in [x for x in os.listdir(self.folder_path) \
+        #                  if x.endswith('tsv.gz') and x in \
+        #                  ['title.akas.tsv.gz', 'title.principals.tsv.gz']]:
         for datafile in [x for x in os.listdir(self.folder_path) if x.endswith('tsv.gz')]:
             dataname = ('').join(datafile.split('.')[:2])
-            print(f"#{self.number} start restoring {dataname}")
             # read data
             data_path = os.path.join(self.folder_path, datafile)
-            with gzip.open(data_path, 'rb') as f:
-                df = dd.read_csv(data_path, sep = '\t', dtype=object, blocksize=None)
-            df = df.replace('\\N', "")
-            df = df.set_index(self.pks[dataname])
+            if datafile == 'title.akas.tsv.gz':
+                with gzip.open(data_path, 'rb') as f:
+                    dask_df = dd.read_csv(data_path, sep = '\t', dtype={'isOriginalTitle': 'object'}, blocksize=None)
+                dask_df = dask_df.replace( '\\N', '')
+            else :
+                with gzip.open(data_path, 'rb') as f:
+                    dask_df = dd.read_csv(data_path, sep = '\t', blocksize=None)
+                dask_df = dask_df.replace( '\\N', '')        
+
+
             # create empty table in DB
             conn = psycopg2.connect(self.connect_cmd)
-            cursor = conn.cursor()
-            schema = 'public'
-            primary_key = self.pks[dataname]
-        
-            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS {schema}')
-            query_string = f'CREATE TABLE IF NOT EXISTS {schema}.{dataname} ({", ".join([f"{col} {self.dtype_dict[dataname][col]}" for col in df.columns])})'
-            print(query_string)
-            cursor.execute(f'CREATE TABLE IF NOT EXISTS {schema}.{dataname} ({", ".join([f"{col} {self.dtype_dict[dataname][col]}" for col in df.columns])})')
-            cursor.execute(f'ALTER TABLE {schema}.{dataname} ADD PRIMARY KEY ({primary_key})')
-            
-            # load data to DB
-            # Write data to table
-            err_tables = []
-            for n in range(df.npartitions):
-                data = df.get_partition(n).compute()
-                output = StringIO()
-                data.to_csv(output, sep='\t', header=False, index=False)
-                output.seek(0)
-                try:
-                    cursor.copy_from(output, f'{schema}.{dataname}', null='')
-                except Exception:
-                    print(Exception)
-                    err_tables.append(data)
-                    conn.rollback()
-                    continue
-                conn.commit()
+            engine = create_engine(self.create_engine_cmd)
 
-            # Close database connection
-            cursor.close()
-            conn.close()
-            print(f"{dataname} finished.")
-            self.number += 1
+            pd.DataFrame(columns=dask_df.columns).to_sql(
+                dataname, 
+                con=engine, 
+                if_exists='replace', 
+                index=False)
+            err_tables = []
+            # load data to DB
+            with conn.cursor() as curs:
+                for n in range(dask_df.npartitions):    
+                    table_chunk = dask_df.get_partition(n).compute()
+                    output = io.StringIO()
+                    table_chunk.to_csv(output, sep='\t', header=False, index=False)
+                    output.seek(0)
+                    try:
+                        curs.copy_from(output, dataname, null='')
+                    except Exception:
+                        err_tables.append(table_chunk)
+                        conn.rollback()
+                        continue
+                    conn.commit()
+
+                # check if data loaded to DB    
+                curs.execute("""
+                select count(*) from """+dataname+"""
+                            """)
+
+                datacount = curs.fetchone()
+            # delete dataframe to lighten memory
+            print(f"Finished {dataname}, {datacount[0]} rows restored")
+            del dask_df
+
+    def psql_insert_copy(self, table, conn, keys, data_iter):
+        """
+        Execute SQL statement inserting data
+        Parameters
+        ----------
+        table : pandas.io.sql.SQLTable
+        conn : sqlalchemy.engine.Engine or sqlalchemy.engine.Connection
+        keys : list of str
+            Column names
+        data_iter : Iterable that iterates the values to be inserted
+        """
+        # gets a DBAPI connection that can provide a cursor
+        dbapi_conn = conn.connection
+        with dbapi_conn.cursor() as cur:
+            s_buf = StringIO()
+            writer = csv.writer(s_buf)
+            writer.writerows(data_iter)
+            s_buf.seek(0)
+
+            columns = ', '.join('"{}"'.format(k) for k in keys)
+            if table.schema:
+                table_name = '{}.{}'.format(table.schema, table.name)
+            else:
+                table_name = table.name
+
+            sql = 'COPY {} ({}) FROM STDIN WITH CSV'.format(
+                table_name, columns)
+            cur.copy_expert(sql=sql, file=s_buf)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Import IMDb datasets into the database",
@@ -140,9 +139,9 @@ if __name__ == "__main__":
     print(f"Password: {args.password}")
     folder_path = args.folder_path if args.folder_path else '/Users/yanlongsun/Downloads/imdb_data/'  
     print(f"Dataset Path: {folder_path}")
-    print("\n")
     i = ImportData(dbname=args.dbname, 
                    username=args.username, 
                    password=args.password, 
                    folder_path=folder_path)
-    i.import_all()
+    i.import_partial()
+    i.import_rest()
