@@ -9,30 +9,31 @@ from sqlalchemy import create_engine
 from dask import dataframe as dd
 import argparse
 
+
 class ImportData:
     def __init__(self, dbname, username, password, folder_path):
         self.folder_path = folder_path
         self.dbname = dbname
         self.username = username
         self.password = password
-        self.connect_cmd = "dbname="+ self.dbname + " " + "user=" + self.username + " " + "password=" + self.password
+        self.connect_cmd = "dbname=" + self.dbname + " " + "user=" + self.username + " " + "password=" + self.password
         self.create_engine_cmd = "postgresql://" + self.username + ":" + self.password + "@localhost:5432/" + self.dbname
 
     def import_partial(self):
-        for datafile in [x for x in os.listdir(self.folder_path) \
-                         if x.endswith('tsv.gz') and x not in \
+        for datafile in [x for x in os.listdir(self.folder_path)
+                         if x.endswith('tsv.gz') and x not in
                          ['title.akas.tsv.gz', 'title.principals.tsv.gz']]:
-            dataname = ('').join(datafile.split('.')[:2])
+            dataname = ''.join(datafile.split('.')[:2])
             with gzip.open(os.path.join(self.folder_path, datafile), 'rb') as f:
                 # read data
                 df = pd.read_csv(f, sep= '\t',chunksize=10000)
                 pd_df = pd.concat(df)
-            pd_df = pd_df.replace( '\\N', '')
+            pd_df = pd_df.replace('\\N', '')
             # load data to DB
             conn = psycopg2.connect(self.connect_cmd)
             engine = create_engine(self.create_engine_cmd)
             pd_df.to_sql(dataname, engine, method=self.psql_insert_copy)
-            #control operation
+            # control operation
             with conn.cursor() as curs:
                 curs.execute("""
                 select count(*) from """+dataname+"""
@@ -56,7 +57,6 @@ class ImportData:
                 with gzip.open(data_path, 'rb') as f:
                     dask_df = dd.read_csv(data_path, sep = '\t', blocksize=None)
                 dask_df = dask_df.replace( '\\N', '')        
-
 
             # create empty table in DB
             conn = psycopg2.connect(self.connect_cmd)
