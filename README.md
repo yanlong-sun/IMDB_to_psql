@@ -1,4 +1,4 @@
-##### Restore the data download from https://datasets.imdbws.com/ to Postgresql database.
+##### Restore the data from https://datasets.imdbws.com/ to Postgresql database.
 ##### Documentation for these data files can be found on http://www.imdb.com/interfaces/
 
 Usage:   
