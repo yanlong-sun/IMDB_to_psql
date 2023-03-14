@@ -62,6 +62,6 @@ END),
 
 ALTER COLUMN "deathYear" TYPE date
 USING (CASE 
-WHEN "deathYear" IS NULL THEN NULL 
-ELSE to_date("deathYear", 'YYYY') 
-END),
+    WHEN "deathYear" IS NULL THEN NULL 
+    ELSE to_date("deathYear", 'YYYY') 
+END);
