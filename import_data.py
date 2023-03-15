@@ -71,8 +71,7 @@ class ImportData:
             pd.DataFrame(columns=dask_df.columns).to_sql(
                 dataname,
                 con=engine,
-                if_exists='replace',
-                index=False)
+                if_exists='replace')
             err_tables = []
             # load data to DB
             with conn.cursor() as curs:
