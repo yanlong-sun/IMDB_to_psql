@@ -18,16 +18,16 @@ USING (CASE
     ELSE false 
 END),
 
-ALTER COLUMN "startYear" TYPE date
+ALTER COLUMN "startYear" TYPE integer
 USING (CASE 
     WHEN "startYear" IS NULL THEN NULL 
-    ELSE to_date("startYear", 'YYYY') 
+    ELSE "startYear"::integer
 END),
 
-ALTER COLUMN "endYear" TYPE date
+ALTER COLUMN "endYear" TYPE integer
 USING (CASE 
-WHEN "endYear" IS NULL THEN NULL 
-ELSE to_date("endYear", 'YYYY') 
+    WHEN "endYear" IS NULL THEN NULL 
+    ELSE "endYear"::integer
 END),
 
 ALTER COLUMN "runtimeMinutes" TYPE INTEGER
@@ -54,14 +54,14 @@ USING "ordering"::integer;
 /* namebasics*/
 ALTER TABLE namebasics
 
-ALTER COLUMN "birthYear" TYPE date
+ALTER COLUMN "birthYear" TYPE integer
 USING (CASE 
     WHEN "birthYear" IS NULL THEN NULL 
-    ELSE to_date("birthYear", 'YYYY') 
+    ELSE "birthYear"::integer 
 END),
 
-ALTER COLUMN "deathYear" TYPE date
+ALTER COLUMN "deathYear" TYPE integer
 USING (CASE 
     WHEN "deathYear" IS NULL THEN NULL 
-    ELSE to_date("deathYear", 'YYYY') 
+    ELSE "deathYear"::integer
 END);
