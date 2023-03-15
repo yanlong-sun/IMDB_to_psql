@@ -2,7 +2,6 @@
 ALTER TABLE titleakas
 ALTER COLUMN ordering TYPE INTEGER
 USING ordering::integer,
-
 ALTER COLUMN "isOriginalTitle" TYPE Boolean
 USING (CASE 
     WHEN "isOriginalTitle" = '1' THEN true 
@@ -47,7 +46,6 @@ USING "episodeNumber"::integer;
 
 /* titleprincipals*/
 ALTER TABLE titleprincipals
-
 ALTER COLUMN "ordering" TYPE integer
 USING "ordering"::integer;
 

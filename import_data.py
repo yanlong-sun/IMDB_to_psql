@@ -26,8 +26,9 @@ class ImportData:
 
     def import_partial(self):
         for datafile in [x for x in os.listdir(self.folder_path)
-                         if x.endswith('tsv.gz') and x not in
-                         ['title.akas.tsv.gz', 'title.principals.tsv.gz']]:
+                         # and x not in['title.akas.tsv.gz', 'title.principals.tsv.gz']
+                         if x.endswith('tsv.gz')
+                         ]:
             dataname = ''.join(datafile.split('.')[:2])
             with gzip.open(os.path.join(self.folder_path, datafile), 'rb') as f:
                 # read data
@@ -64,6 +65,12 @@ class ImportData:
                     dask_df = dd.read_csv(data_path, sep='\t', blocksize=None)
                 dask_df = dask_df.replace('\\N', '')
 
+            # add unique ID column
+            def add_id(df):
+                df['id'] = (df.index + df.index.max() + 1)
+                return df
+            dask_df = dask_df.map_partitions(add_id)
+
             # create empty table in DB
             conn = psycopg2.connect(self.connect_cmd)
             engine = create_engine(self.create_engine_cmd)
@@ -71,6 +78,7 @@ class ImportData:
             pd.DataFrame(columns=dask_df.columns).to_sql(
                 dataname,
                 con=engine,
+                index=False,
                 if_exists='replace')
             err_tables = []
             # load data to DB
@@ -163,5 +171,5 @@ if __name__ == "__main__":
                    password=args.password,
                    folder_path=folder_path)
     i.import_partial()
-    i.import_rest()
+    # i.import_rest()
     i.preprocessing()
